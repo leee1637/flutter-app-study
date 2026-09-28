@@ -32,7 +32,8 @@ class ProductModel {
       imageUrl: map['imageUrl'] as String? ?? '',
       status: status,
       takenBy: map['taken_by'] as String? ?? map['takenBy'] as String?,
-      takenAt: _parseDateTime(map['taken_at'] ?? map['takenAt'] ?? map['timestamp']),
+      takenAt:
+          _parseDateTime(map['taken_at'] ?? map['takenAt'] ?? map['timestamp']),
     );
   }
 
@@ -45,7 +46,24 @@ class ProductModel {
     if (value == null) return null;
     if (value is DateTime) return value;
     if (value is Timestamp) return value.toDate();
-    if (value is String) return DateTime.parse(value);
+    if (value is int) {
+      // Firestore Timestamp в некоторых случаях приезжает как millis.
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is String) {
+      // Данные могли прийти битыми: отформатированное поле даты в БД, ручная
+      // правка SQL, старый формат. Бросать здесь исключение нельзя — упадёт
+      // весь список товаров из-за одного неверного значения, поэтому
+      // возвращаем null и показываем товар без времени операции.
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed;
+
+      // Формат SQLite по умолчанию: "2026-01-15 10:30:00.000".
+      final sqlLike = DateTime.tryParse(value.replaceFirst(' ', 'T'));
+      if (sqlLike != null) return sqlLike;
+
+      return null;
+    }
     return null;
   }
 
@@ -72,16 +90,22 @@ class ProductModel {
     };
   }
 
+  /// Копия товара с изменёнными полями.
+  ///
+  /// У `takenBy` и `takenAt` тип параметра — `Object?`, а не `String?`:
+  /// при возврате товара поля надо именно очистить, то есть передать `null`.
+  /// Обычный nullable-параметр не позволяет отличить «не передано» от
+  /// «передано null», из-за чего пришлось бы заводить отдельные флаги
+  /// `clearTakenBy` / `clearTakenAt`, которые легко забыть поставить.
+  /// Значение [_unset] означает «оставь поле как было».
   ProductModel copyWith({
     String? id,
     String? name,
     String? description,
     String? imageUrl,
     String? status,
-    String? takenBy,
-    DateTime? takenAt,
-    bool clearTakenBy = false,
-    bool clearTakenAt = false,
+    Object? takenBy = _unset,
+    Object? takenAt = _unset,
   }) {
     return ProductModel(
       id: id ?? this.id,
@@ -89,9 +113,11 @@ class ProductModel {
       description: description ?? this.description,
       imageUrl: imageUrl ?? this.imageUrl,
       status: status ?? this.status,
-      takenBy: clearTakenBy ? null : (takenBy ?? this.takenBy),
-      takenAt: clearTakenAt ? null : (takenAt ?? this.takenAt),
+      takenBy: identical(takenBy, _unset) ? this.takenBy : takenBy as String?,
+      takenAt: identical(takenAt, _unset) ? this.takenAt : takenAt as DateTime?,
     );
   }
 }
 
+/// Маркер «параметр не передан» — см. [ProductModel.copyWith].
+const Object _unset = Object();

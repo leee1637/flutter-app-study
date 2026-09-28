@@ -2,23 +2,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:warehouse_app/data/models/product_model.dart';
 import 'package:warehouse_app/data/repositories/product_repository.dart';
 
-final productRepositoryProviderFromProviders = Provider<ProductRepository>((ref) {
-  final repo = ref.read(productRepositoryProvider);
-  return repo;
-});
+/// Список товаров — состояние, которым управляет [ProductsNotifier].
+///
+/// Раньше здесь был ещё и `FutureProvider` с тем же запросом; он был нужен
+/// только как «якорь» для `ref.invalidate`, то есть два провайдера грузили
+/// одно и то же. Остался один.
+final productsNotifierProvider =
+    StateNotifierProvider<ProductsNotifier, AsyncValue<List<ProductModel>>>(
+  (ref) => ProductsNotifier(ref.watch(productRepositoryProvider)),
+);
 
-final productsProvider = FutureProvider<List<ProductModel>>((ref) async {
-  final repo = ref.watch(productRepositoryProviderFromProviders);
-  return await repo.getProducts();
-});
-
-final productProvider = FutureProvider.family<ProductModel, String>((ref, id) async {
-  final repo = ref.watch(productRepositoryProviderFromProviders);
-  return await repo.getProductById(id);
-});
-
-final productsNotifierProvider = StateNotifierProvider<ProductsNotifier, AsyncValue<List<ProductModel>>>((ref) {
-  return ProductsNotifier(ref.watch(productRepositoryProviderFromProviders));
+/// Один товар по идентификатору. `.family` — это «экземпляр провайдера на
+/// каждый аргумент»: карточка `abc` и карточка `xyz` кэшируются независимо.
+final productProvider =
+    FutureProvider.family<ProductModel, String>((ref, id) async {
+  return ref.watch(productRepositoryProvider).getProductById(id);
 });
 
 class ProductsNotifier extends StateNotifier<AsyncValue<List<ProductModel>>> {
@@ -31,41 +29,32 @@ class ProductsNotifier extends StateNotifier<AsyncValue<List<ProductModel>>> {
   Future<void> loadProducts() async {
     state = const AsyncValue.loading();
     try {
-      final products = await _repository.getProducts();
-      state = AsyncValue.data(products);
+      state = AsyncValue.data(await _repository.getProducts());
     } catch (e, stack) {
       state = AsyncValue.error(e, stack);
     }
   }
 
-  Future<void> takeProduct(String productId, String userId) async {
-    try {
-      await _repository.takeProduct(productId, userId);
-      await loadProducts();
-    } catch (e) {
-      state = AsyncValue.error(e, StackTrace.current);
-      rethrow;
-    }
-  }
+  /// После любой мутации список перечитывается: так экраны не расходятся
+  /// с источником правды, а `FutureProvider` одного товара сбрасывается
+  /// вызывающим кодом через `ref.invalidate`.
+  Future<void> takeProduct(String productId, String userId) =>
+      _mutate(() => _repository.takeProduct(productId, userId));
 
-  Future<void> returnProduct(String productId, String userId) async {
-    try {
-      await _repository.returnProduct(productId, userId);
-      await loadProducts();
-    } catch (e) {
-      state = AsyncValue.error(e, StackTrace.current);
-      rethrow;
-    }
-  }
+  Future<void> returnProduct(String productId, String userId) =>
+      _mutate(() => _repository.returnProduct(productId, userId));
 
-  Future<void> addProduct(ProductModel product) async {
+  Future<void> addProduct(ProductModel product) =>
+      _mutate(() => _repository.addProduct(product));
+
+  Future<void> _mutate(Future<void> Function() action) async {
     try {
-      await _repository.addProduct(product);
+      await action();
       await loadProducts();
     } catch (e) {
       state = AsyncValue.error(e, StackTrace.current);
+      // Ошибку не глотаем: вызывающий экран покажет её пользователю.
       rethrow;
     }
   }
 }
-

@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:uuid/uuid.dart';
+import 'package:warehouse_app/core/constants/app_constants.dart';
 import 'package:warehouse_app/core/services/image_storage_service.dart';
 import 'package:warehouse_app/core/utils/qr_payload.dart';
 import 'package:warehouse_app/data/models/product_model.dart';
@@ -15,6 +16,7 @@ import 'package:warehouse_app/presentation/providers/auth_provider.dart';
 import 'package:warehouse_app/presentation/providers/product_provider.dart';
 import 'package:warehouse_app/presentation/widgets/custom_text_field.dart';
 
+/// Экран создания товара. Доступен только администратору.
 class AddProductScreen extends ConsumerStatefulWidget {
   const AddProductScreen({super.key});
 
@@ -26,27 +28,37 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
+
   String? _imagePath;
   String? _qrData;
   bool _isSaving = false;
 
   @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
-    bool isAdmin = false;
+    final isAdmin = authState is AuthSuccess &&
+        authState.user.role == AppConstants.adminRole;
 
-    if (authState is AuthSuccess) {
-      isAdmin = authState.user.role == 'admin';
-    }
-
+    // Продублировано в redirect роутера: проверка прав должна быть
+    // и в точке действия, а не только в навигации.
     if (!isAdmin) {
-    return Scaffold(
+      return Scaffold(
         appBar: AppBar(title: const Text('Недостаточно прав')),
         body: const Center(
-          child: Text('Только администратор может добавлять товары'),
-              ),
-    );
-  }
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text('Только администратор может добавлять товары'),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Добавить товар')),
@@ -57,7 +69,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
           child: Column(
             children: [
               InkWell(
-                onTap: _selectImageFromDialog,
+                onTap: _showImageSourceDialog,
                 child: Container(
                   width: 220,
                   height: 220,
@@ -79,7 +91,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                 controller: _nameController,
                 label: 'Название',
                 validator: (value) =>
-                    value?.trim().isEmpty == true ? 'Введите название' : null,
+                    value?.trim().isEmpty ?? true ? 'Введите название' : null,
               ),
               const SizedBox(height: 16),
               CustomTextField(
@@ -111,14 +123,15 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 12,
-                    color: _qrData!.startsWith('http') ? Colors.blue : Colors.orange,
+                    color: _isWebLink ? Colors.blue : Colors.orange,
                   ),
                 ),
-                if (!_qrData!.startsWith('http'))
+                if (!_isWebLink)
                   const Padding(
                     padding: EdgeInsets.only(top: 4),
                     child: Text(
-                      'Ссылка не доступна в браузере (изображение сохранено локально)',
+                      'Товар сохранён только на этом устройстве: QR откроется '
+                      'в приложении, но не в браузере',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 11, color: Colors.orange),
                     ),
@@ -136,11 +149,9 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                 ElevatedButton(
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: _qrData!));
-      ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Ссылка скопирована в буфер обмена'),
-                      ),
-      );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Ссылка скопирована')),
+                    );
                   },
                   child: const Text('Скопировать ссылку'),
                 ),
@@ -152,94 +163,83 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     );
   }
 
-  Future<void> _selectImageFromDialog() async {
-    await showDialog(
+  bool get _isWebLink => _qrData?.startsWith('http') ?? false;
+
+  Future<void> _showImageSourceDialog() async {
+    await showDialog<void>(
       context: context,
-      builder: (BuildContext context) {
-        return SimpleDialog(
-          title: const Text('Выбрать изображение'),
-          children: [
-            SimpleDialogOption(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _selectImage(ImageSource.camera);
-              },
-              child: const Row(
-                children: [
-                  Icon(Icons.camera_alt),
-                  SizedBox(width: 16),
-                  Text('Сделать фото'),
-                ],
-              ),
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Выбрать изображение'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _selectImage(ImageSource.camera);
+            },
+            child: const Row(
+              children: [
+                Icon(Icons.camera_alt),
+                SizedBox(width: 16),
+                Text('Сделать фото'),
+              ],
             ),
-            SimpleDialogOption(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _selectImage(ImageSource.gallery);
-              },
-              child: const Row(
-                children: [
-                  Icon(Icons.image),
-                  SizedBox(width: 16),
-                  Text('Выбрать из галереи'),
-                ],
-              ),
+          ),
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _selectImage(ImageSource.gallery);
+            },
+            child: const Row(
+              children: [
+                Icon(Icons.image),
+                SizedBox(width: 16),
+                Text('Выбрать из галереи'),
+              ],
             ),
-            SimpleDialogOption(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Row(
-                children: [
-                  Icon(Icons.close),
-                  SizedBox(width: 16),
-                  Text('Отмена'),
-                ],
-              ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Row(
+              children: [
+                Icon(Icons.close),
+                SizedBox(width: 16),
+                Text('Отмена'),
+              ],
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      ),
     );
   }
 
   Future<void> _selectImage(ImageSource source) async {
-    if (source == ImageSource.camera) {
-      final status = await Permission.camera.request();
-      if (status.isGranted) {
-        final result = await ImagePicker().pickImage(source: source);
-        if (result != null) {
-          setState(() => _imagePath = result.path);
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Разрешение на камеру отклонено')),
-          );
-        }
-      }
-    } else {
-      final permission = Platform.isAndroid ? Permission.storage : Permission.photos;
-      final status = await permission.request();
-      if (status.isGranted || status.isLimited) {
-        final result = await ImagePicker().pickImage(source: source);
-        if (result != null) {
-          setState(() => _imagePath = result.path);
-    }
-      } else {
-        if (mounted) {
+    // Разрешения разные: камера — один, галерея — другой, и на Android 13+
+    // доступа к «хранилищу» больше нет, только photos.
+    final permission = source == ImageSource.camera
+        ? Permission.camera
+        : (Platform.isAndroid ? Permission.photos : Permission.storage);
+
+    final status = await permission.request();
+    if (!status.isGranted && !status.isLimited) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Разрешение на доступ к галерее отклонено')),
+          SnackBar(content: Text('Нет доступа: ${permission.toString()}')),
         );
       }
-      }
+      return;
+    }
+
+    final picked = await ImagePicker().pickImage(source: source);
+    if (picked != null && mounted) {
+      setState(() => _imagePath = picked.path);
     }
   }
 
   Future<void> _saveAndGenerateQR() async {
     if (!_formKey.currentState!.validate()) return;
-      final name = _nameController.text.trim();
-      final description = _descriptionController.text.trim();
+
+    final name = _nameController.text.trim();
+    final description = _descriptionController.text.trim();
     final imagePath = _imagePath;
 
     if (imagePath == null) {
@@ -256,42 +256,56 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       final imageFile = File(imagePath);
       final imageStorage = ImageStorageService();
 
-      String imageUrl;
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline = !connectivity.contains(ConnectivityResult.none);
 
-      if (!isOnline) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Нет интернета. Подключитесь к сети для создания ссылки на фото.')),
-          );
-        }
-        return;
-      }
-
-      imageUrl = await imageStorage.uploadProductImage(imageFile, id);
+      // Онлайн: картинка уходит на imgbb, и QR содержит публичную ссылку,
+      // которую откроет любой браузер.
+      // Офлайн: кладём фото во внутреннюю папку приложения, QR будет
+      // вида product://<id> и откроется в этом же приложении.
+      final imageUrl = isOnline
+          ? await imageStorage.uploadProductImage(imageFile, id)
+          : await imageStorage.saveProductImageLocally(imageFile);
 
       final product = ProductModel(
         id: id,
         name: name,
+        // description в БД NOT NULL, поэтому пустое описание заменяем заглушкой.
         description: description.isEmpty ? '-' : description,
         imageUrl: imageUrl,
-        status: 'available',
+        status: AppConstants.statusAvailable,
       );
 
       await ref.read(productsNotifierProvider.notifier).addProduct(product);
-      ref.invalidate(productsProvider);
+      ref.invalidate(productsNotifierProvider);
 
-      final qr = QrPayload(id: id, name: name, description: description, imageUrl: imageUrl);
+      final qr = QrPayload(
+        id: id,
+        name: name,
+        description: description,
+        imageUrl: imageUrl,
+      );
+
       setState(() => _qrData = qr.encode());
+
+      if (!isOnline && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Нет сети: товар сохранён локально и уйдёт в облако '
+                'при подключении'),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка загрузки в облако: $e')),
+          SnackBar(content: Text('Не удалось сохранить товар: $e')),
         );
       }
     } finally {
-      setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
   }
-}
 }

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+/// Текстовое поле с подписью.
+///
+/// Обёртка нужна, чтобы не повторять одну и ту же разметку `TextFormField`
+/// в нескольких формах, и чтобы валидация выглядела одинаково везде.
 class CustomTextField extends StatelessWidget {
   final TextEditingController controller;
   final String label;
@@ -7,8 +11,6 @@ class CustomTextField extends StatelessWidget {
   final int maxLines;
   final String? Function(String?)? validator;
   final TextInputType? keyboardType;
-  final void Function(String)? onChanged;
-  final GlobalKey<FormFieldState<String>>? fieldKey;
 
   const CustomTextField({
     super.key,
@@ -18,20 +20,17 @@ class CustomTextField extends StatelessWidget {
     this.maxLines = 1,
     this.validator,
     this.keyboardType,
-    this.onChanged,
-    this.fieldKey,
   });
 
   @override
   Widget build(BuildContext context) {
     return TextFormField(
-      key: fieldKey,
       controller: controller,
       obscureText: obscureText,
+      // У скрытого поля всегда одна строка, иначе пароль превратится в textarea.
       maxLines: obscureText ? 1 : maxLines,
       validator: validator,
       keyboardType: keyboardType,
-      onChanged: onChanged,
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),

@@ -19,22 +19,12 @@ class ProductDetailScreen extends ConsumerWidget {
     final productAsync = ref.watch(productProvider(id));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Карточка товара'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.qr_code),
-            onPressed: () {
-              // Можем реализовать функцию сохранения QR как изображение
-            },
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Карточка товара')),
       body: productAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, stack) => Center(child: Text('Ошибка: $err')),
         data: (product) {
-          // Generate QR payload 
+          // Generate QR payload
           final qrPayload = QrPayload(
             id: product.id,
             name: product.name,
@@ -42,7 +32,7 @@ class ProductDetailScreen extends ConsumerWidget {
             imageUrl: product.imageUrl,
           );
           final qrUrl = qrPayload.encode();
-          
+
           final takenByAsync = product.takenBy != null
               ? ref.watch(userNameProvider(product.takenBy!))
               : null;
@@ -115,7 +105,8 @@ class ProductDetailScreen extends ConsumerWidget {
                       SelectableText(
                         qrUrl,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 12, color: Colors.blue),
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.blue),
                       ),
                       const SizedBox(height: 8),
                       TextButton.icon(

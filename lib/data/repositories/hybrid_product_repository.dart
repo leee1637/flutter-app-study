@@ -1,10 +1,19 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:warehouse_app/core/app_services.dart';
+import 'package:warehouse_app/core/constants/app_constants.dart';
 import 'package:warehouse_app/data/models/product_model.dart';
 import 'package:warehouse_app/data/repositories/firebase_product_repository.dart';
 import 'package:warehouse_app/data/repositories/local_product_repository.dart';
 import 'package:warehouse_app/data/repositories/product_repository.dart';
 
+/// Offline-first репозиторий: работает и без интернета.
+///
+/// Правила:
+/// * **чтение** — сначала сеть (Firestore), результат кладётся в локальный кэш;
+///   при любой ошибке (нет сети, таймаут, нет прав) отдаём SQLite;
+/// * **запись** — сначала локально, потом в сеть. Так интерфейс отзывчив
+///   и данные не теряются, а «зависшие» записи уходят в облако при синке.
 class HybridProductRepository implements ProductRepository {
   final LocalProductRepository _local;
   final FirebaseProductRepository _firebase;
@@ -15,128 +24,111 @@ class HybridProductRepository implements ProductRepository {
   })  : _local = local ?? LocalProductRepository(),
         _firebase = firebase ?? FirebaseProductRepository();
 
+  /// Проверка сети — только подсказка, а не гарантия: сеть может быть, а
+  /// Firebase всё равно недоступен. Поэтому везде ниже ещё и try/catch.
   Future<bool> get _isOnline async {
     final result = await Connectivity().checkConnectivity();
     return !result.contains(ConnectivityResult.none);
   }
 
   Future<void> _syncIfPossible() async {
-    // Only sync if online and sync service is initialized
-    if (!await _isOnline || AppServices.syncManager == null) return;
+    final syncManager = AppServices.syncManager;
+    if (syncManager == null) return;
     try {
-      await AppServices.syncManager!.syncLocalChanges();
+      await syncManager.syncLocalChanges();
     } catch (e) {
-      print('Error during sync: $e');
+      debugPrint('Синхронизация не удалась: $e');
     }
   }
 
   @override
   Future<List<ProductModel>> getProducts() async {
-    // When online, fetch from Firebase, otherwise use local
-    if (await _isOnline) {
-      try {
-        final products = await _firebase.getProducts();
-        await _local.productDao.clearTable(); // Clear local cache and replace with Firebase data
+    if (!await _isOnline) return _local.getProducts();
 
-        for (final product in products) {
-        await _local.productDao.insertProduct(product);
-      }
-        return products;
-      } catch (e) {
-        // On network error, fall back to local data
-        print('Failed to fetch products from Firebase: $e. Falling back to local storage.');
-        return _local.getProducts();
-      }
-        } else {
-      // Offline - return cached data from local database
+    try {
+      final products = await _firebase.getProducts();
+      await _local.productDao.replaceAll(products);
+      return products;
+    } catch (e) {
+      debugPrint('Не удалось получить товары из сети, беру локальные: $e');
       return _local.getProducts();
-        }
-      }
+    }
+  }
+
   @override
   Future<ProductModel> getProductById(String id) async {
-    // Prioritize getting fresh data from Firebase when online
-    if (await _isOnline) {
+    if (!await _isOnline) return _local.getProductById(id);
+
+    try {
+      final product = await _firebase.getProductById(id);
+      // Обновляем кэш, чтобы офлайн-показать ту же карточку.
+      await _local.productDao.insertProduct(product);
+      return product;
+    } catch (e) {
       try {
-        final product = await _firebase.getProductById(id);
-        // Update local cache with fresh data
-        await _local.productDao.insertProduct(product);
-        return product;
-      } catch (e) {
-        // If online request fails, fall back to local data
-        try {
-          return await _local.getProductById(id);
-        } catch (localError) {
-          throw Exception('Neither remote nor local product found: $localError');
+        return await _local.getProductById(id);
+      } on Exception catch (localError) {
+        throw Exception('Товар не найден ни в сети, ни локально: $localError');
       }
     }
-    } else {
-      // Offline - serve from local db
-      return await _local.getProductById(id);
   }
-}
 
   @override
   Future<void> addProduct(ProductModel product) async {
-    // Add to local cache with a temporary ID starting with "local_"
-    final localProduct = product.id.isEmpty || product.id.startsWith('local_')
-        ? product.copyWith(id: 'local_${DateTime.now().millisecondsSinceEpoch}')
+    final productToSave = product.id.isEmpty
+        ? product.copyWith(id: AppConstants.newLocalId())
         : product;
 
-    await _local.addProduct(localProduct);
+    await _local.addProduct(productToSave);
 
-    // If online, immediately sync to Firebase
-    if (await _isOnline) {
-      try {
-        await _firebase.addProduct(localProduct);
-        _syncIfPossible();
-      } catch (e) {
-        print('Error uploading product to Firebase: $e');
+    if (!await _isOnline) return;
+
+    try {
+      if (AppConstants.isLocalId(productToSave.id)) {
+        // Товар создан офлайн — выдаём ему постоянный ID и переносим в облако.
+        await AppServices.syncManager?.promoteLocalProduct(productToSave.id);
+      } else {
+        await _firebase.addProduct(productToSave);
+        await _syncIfPossible();
       }
+    } catch (e) {
+      debugPrint('Товар сохранён локально, но не загружен в сеть: $e');
     }
   }
 
   @override
   Future<void> takeProduct(String productId, String userId) async {
-    bool isOnline = await _isOnline;
-
-    // Update local database first
+    // Локальная проверка статуса выполняется первой: она мгновенная и работает
+    // без сети, поэтому «занято» отсекается даже на офлайн-устройстве.
     await _local.takeProduct(productId, userId);
 
-    // Update Firebase if online
-    if (isOnline) {
-      try {
-        if (!productId.startsWith('local_')) {
-          await _firebase.takeProduct(productId, userId);
-        } else {
-          // If local-only product, defer updates until synced to Firebase
-          _syncIfPossible();
-        }
-      } catch (e) {
-        print('Error updating product status in Firebase: $e');
+    if (!await _isOnline) return;
+
+    try {
+      if (AppConstants.isLocalId(productId)) {
+        await _syncIfPossible();
+      } else {
+        await _firebase.takeProduct(productId, userId);
       }
+    } catch (e) {
+      debugPrint('Статус сохранён локально, но не синхронизирован: $e');
     }
   }
 
   @override
   Future<void> returnProduct(String productId, String userId) async {
-    bool isOnline = await _isOnline;
-
-    // Update local database first
     await _local.returnProduct(productId, userId);
 
-    // Update Firebase if online
-    if (isOnline) {
-      try {
-        if (!productId.startsWith('local_')) {
-          await _firebase.returnProduct(productId, userId);
-        } else {
-          // If local-only product, defer updates until synced to Firebase
-          _syncIfPossible();
-}
-      } catch (e) {
-        print('Error updating product status in Firebase: $e');
+    if (!await _isOnline) return;
+
+    try {
+      if (AppConstants.isLocalId(productId)) {
+        await _syncIfPossible();
+      } else {
+        await _firebase.returnProduct(productId, userId);
       }
+    } catch (e) {
+      debugPrint('Возврат сохранён локально, но не синхронизирован: $e');
     }
   }
 }
-

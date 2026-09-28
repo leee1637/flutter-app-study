@@ -1,12 +1,24 @@
 part of 'auth_provider.dart';
 
+/// Состояние авторизации описано иерархией классов («сумма-тип»), а не набором
+/// флагов `_isLoading` / `_error` / `_user`.
+///
+/// Так невозможно забыть обработать состояние, ошибка всегда едет вместе
+/// с текстом, а `AuthSuccess` несёт данные — экрану не нужно делать
+/// второй запрос, чтобы узнать, кто вошёл.
 abstract class AuthState {
   const AuthState();
 }
 
-class AuthInitial extends AuthState {}
+/// Ещё проверяется сохранённая сессия.
+class AuthInitial extends AuthState {
+  const AuthInitial();
+}
 
-class AuthLoading extends AuthState {}
+/// Идёт запрос к сети.
+class AuthLoading extends AuthState {
+  const AuthLoading();
+}
 
 class AuthSuccess extends AuthState {
   final UserModel user;
@@ -14,7 +26,9 @@ class AuthSuccess extends AuthState {
   const AuthSuccess({required this.user});
 }
 
-class AuthUnauthenticated extends AuthState {}
+class AuthUnauthenticated extends AuthState {
+  const AuthUnauthenticated();
+}
 
 class AuthFailure extends AuthState {
   final String message;

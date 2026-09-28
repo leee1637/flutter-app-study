@@ -5,10 +5,18 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:warehouse_app/core/constants/app_constants.dart';
 
+/// Работа с фотографией товара.
+///
+/// Два сценария:
+/// * [uploadProductImage] — заливка на imgbb, нужен интернет. Возвращает
+///   публичную ссылку, которую можно зашить в QR-код;
+/// * [saveProductImageLocally] — сохранение во внутреннюю папку приложения.
+///   Используется в офлайне: фото остаётся доступно на устройстве, а QR
+///   получает вид `product://<id>` вместо веб-ссылки.
 class ImageStorageService {
   Future<String> saveProductImageLocally(File source) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final imagesDir = Directory(p.join(dir.path, 'product_images'));
+    final documentsDir = await getApplicationDocumentsDirectory();
+    final imagesDir = Directory(p.join(documentsDir.path, 'product_images'));
     if (!await imagesDir.exists()) {
       await imagesDir.create(recursive: true);
     }
@@ -24,37 +32,46 @@ class ImageStorageService {
     final base64Image = base64Encode(bytes);
 
     final boundary = '----FormBoundary${DateTime.now().millisecondsSinceEpoch}';
-    final uri = Uri.parse('https://api.imgbb.com/1/upload');
+    final uri = Uri.parse(AppConstants.imgbbUploadEndpoint);
     final request = await HttpClient().postUrl(uri);
-    request.headers.set('Content-Type', 'multipart/form-data; boundary=$boundary');
+    request.headers
+        .set('Content-Type', 'multipart/form-data; boundary=$boundary');
 
-    final body = StringBuffer();
-    body.writeln('--$boundary');
-    body.writeln('Content-Disposition: form-data; name="key"');
-    body.writeln();
-    body.writeln(AppConstants.imgbbApiKey);
-    body.writeln('--$boundary');
-    body.writeln('Content-Disposition: form-data; name="image"');
-    body.writeln();
-    body.writeln(base64Image);
-    body.writeln('--$boundary');
-    body.writeln('Content-Disposition: form-data; name="name"');
-    body.writeln();
-    body.writeln(productId);
-    body.writeln('--$boundary--');
+    // imgbb принимает картинку либо как файл, либо как base64-строку.
+    // Отправляем base64 — так не нужно вручную подставлять filename
+    // и Content-Type каждой части multipart-тела.
+    final body = StringBuffer()
+      ..writeln('--$boundary')
+      ..writeln('Content-Disposition: form-data; name="key"')
+      ..writeln()
+      ..writeln(AppConstants.imgbbApiKey)
+      ..writeln('--$boundary')
+      ..writeln('Content-Disposition: form-data; name="image"')
+      ..writeln()
+      ..writeln(base64Image)
+      ..writeln('--$boundary')
+      ..writeln('Content-Disposition: form-data; name="name"')
+      ..writeln()
+      ..writeln(productId)
+      ..writeln('--$boundary--');
 
     request.write(body.toString());
     final response = await request.close();
     final responseBody = await response.transform(utf8.decoder).join();
 
     if (response.statusCode != 200) {
-      throw Exception('imgbb upload failed (${response.statusCode}): $responseBody');
+      throw Exception('imgbb вернул ошибку ${response.statusCode}');
     }
 
-    final json = jsonDecode(responseBody) as Map<String, dynamic>;
-    final url = json['data']?['url'] as String?;
+    final decoded = jsonDecode(responseBody);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Неожиданный ответ imgbb');
+    }
+
+    final data = decoded['data'];
+    final url = data is Map<String, dynamic> ? data['url'] as String? : null;
     if (url == null || url.isEmpty) {
-      throw Exception('imgbb returned no URL');
+      throw Exception('imgbb не вернул ссылку на изображение');
     }
 
     return url;

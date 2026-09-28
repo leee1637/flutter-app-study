@@ -65,19 +65,19 @@ class ProductImage extends StatelessWidget {
           } else if (snapshot.hasData && snapshot.data == true) {
             return Image.file(
               file,
-      width: width,
-      height: height,
+              width: width,
+              height: height,
               fit: fit,
               cacheWidth: (width * 2).toInt(),
               cacheHeight: (height * 2).toInt(),
               errorBuilder: (_, __, ___) => _placeholder(context),
-    );
+            );
           } else {
             return _placeholder(context);
-  }
+          }
         },
       );
-}
+    }
 
     return ClipRRect(borderRadius: borderRadius, child: image);
   }
@@ -98,4 +98,3 @@ class ProductImage extends StatelessWidget {
     );
   }
 }
-

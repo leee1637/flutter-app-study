@@ -15,8 +15,6 @@ dependencies:
   firebase_core: any
   firebase_auth: any
   cloud_firestore: any
-  firebase_storage: any
-  google_sign_in: ^6.1.5
   flutter_svg: ^2.0.10
   qr_flutter: any
   mobile_scanner: ^6.0.0

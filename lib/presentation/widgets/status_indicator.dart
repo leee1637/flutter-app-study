@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:warehouse_app/core/constants/app_constants.dart';
 
+/// Цветовая метка статуса товара.
+///
+/// Статус приходит из базы строкой, поэтому у `switch` обязателен `default`:
+/// компилятор не проверит, что все возможные значения обработаны.
 class StatusIndicator extends StatelessWidget {
   final String status;
 
@@ -7,18 +12,16 @@ class StatusIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Color color;
-    String text;
+    final Color color;
+    final String text;
 
     switch (status) {
-      case 'available':
+      case AppConstants.statusAvailable:
         color = Colors.green;
         text = 'Свободен';
-        break;
-      case 'taken':
+      case AppConstants.statusTaken:
         color = Colors.orange;
         text = 'Занят';
-        break;
       default:
         color = Colors.grey;
         text = 'Неизвестно';

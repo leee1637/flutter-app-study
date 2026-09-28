@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// Правила доступа к Firestore.
+//
+// Устанавливаются в консоли Firebase:
+//   Firestore Database -> Rules -> вставить этот файл -> Publish
+// или командой: firebase deploy --only firestore:rules
+//
+// Смысл: клиентский код проверяет права, но клиенту нельзя доверять —
+// поэтому каждое чтение и запись дополнительно проверяются на сервере.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && userDoc(request.auth.uid).role == 'admin';
+    }
+
+    // Пользователи.
+    match /users/{userId} {
+      // Чтение нужно всем авторизованным: приложение показывает имена
+      // пользователей и список сотрудников.
+      allow read: if isSignedIn();
+
+      // Регистрация: клиент сам создаёт документ после createUserWithEmailAndPassword.
+      // email обязан совпадать с email из токена Firebase Auth — иначе можно было бы
+      // создать документ от чужого имени.
+      allow create: if isSignedIn()
+                    && request.resource.data.email == request.auth.token.email
+                    && request.resource.data.name is string
+                    && request.resource.data.role in ['user', 'admin'];
+
+      // Менять роль может только администратор. Обычный пользователь вправе
+      // обновить только свой документ и не может при этом поменять роль.
+      allow update: if isAdmin()
+                    || (isSignedIn()
+                        && request.auth.uid == userId
+                        && request.resource.data.role == resource.data.role);
+
+      allow delete: if isAdmin();
+    }
+
+    // Товары: склад общий для всех сотрудников, поэтому любой авторизованный
+    // читает и редактирует. Проверка «товар свободен / уже взят» выполняется
+    // в транзакции на клиенте (FirebaseProductRepository.takeProduct).
+    match /products/{productId} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}

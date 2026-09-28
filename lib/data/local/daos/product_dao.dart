@@ -1,7 +1,9 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:warehouse_app/data/models/product_model.dart';
 import 'package:warehouse_app/data/local/database_helper.dart';
+import 'package:warehouse_app/data/models/product_model.dart';
 
+/// Доступ к таблице `products`. Знает про SQL и ничего не знает про сеть —
+/// это позволяет менять источник данных (SQLite / Firestore) на верхних уровнях.
 class ProductDao {
   final DatabaseHelper dbHelper;
 
@@ -18,21 +20,14 @@ class ProductDao {
 
   Future<ProductModel?> getProductById(String id) async {
     final db = await dbHelper.database;
-    final List<Map<String, dynamic>> maps = await db.query(
-      'products',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-
-    if (maps.isNotEmpty) {
-      return ProductModel.fromMap(maps.first);
-    }
-    return null;
+    final maps = await db.query('products', where: 'id = ?', whereArgs: [id]);
+    if (maps.isEmpty) return null;
+    return ProductModel.fromMap(maps.first);
   }
 
   Future<List<ProductModel>> getAllProducts() async {
     final db = await dbHelper.database;
-    final List<Map<String, dynamic>> maps = await db.query('products');
+    final maps = await db.query('products');
     return List.generate(maps.length, (i) => ProductModel.fromMap(maps[i]));
   }
 
@@ -48,43 +43,25 @@ class ProductDao {
 
   Future<void> deleteProduct(String id) async {
     final db = await dbHelper.database;
-    await db.delete(
-      'products',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await db.delete('products', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<void> takeProduct(String productId, String userId) async {
+  /// Полная перезапись кэша товаров «снимком» из сети.
+  ///
+  /// Выполняется одной транзакцией: если приложение убить посреди цикла вставок,
+  /// кэш останется консистентным (полностью старый или полностью новый),
+  /// а не «наполовину обновлённым».
+  Future<void> replaceAll(List<ProductModel> products) async {
     final db = await dbHelper.database;
-    await db.update(
-      'products',
-      {
-        'status': 'taken',
-        'taken_by': userId,
-        'taken_at': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [productId],
-    );
-  }
-
-  Future<void> returnProduct(String productId) async {
-    final db = await dbHelper.database;
-    await db.update(
-      'products',
-      {
-        'status': 'available',
-        'taken_by': null,
-        'taken_at': null,
-      },
-      where: 'id = ?',
-      whereArgs: [productId],
-    );
-  }
-
-  Future<void> clearTable() async {
-    final db = await dbHelper.database;
-    await db.delete('products');
+    await db.transaction((txn) async {
+      await txn.delete('products');
+      for (final product in products) {
+        await txn.insert(
+          'products',
+          product.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
   }
 }

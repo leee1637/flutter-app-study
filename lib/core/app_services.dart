@@ -1,20 +1,10 @@
 import 'package:warehouse_app/data/sync/sync_manager.dart';
-import 'package:warehouse_app/data/local/database_helper.dart';
 
+/// Глобальный сервисный локатор.
+///
+/// Существует, чтобы [SyncManager] (который создаётся в `main`) был доступен
+/// репозиториям без прокидывания через цепочку Riverpod-провайдеров —
+/// иначе возник бы циклический импорт/зависимость.
 class AppServices {
   static SyncManager? syncManager;
-
-  static Future<void> clearAllData() async {
-    // Clear local database
-    await DatabaseHelper().clearDatabase();
-
-    // Reset sync manager reference if needed
-    syncManager = null;
-  }
-
-  static Future<void> resetDatabase() async {
-    await DatabaseHelper().resetDatabase();
-    syncManager = null;
-  }
 }
-

@@ -23,7 +23,8 @@ class UserModel {
       name: map['name'] as String? ?? '',
       email: map['email'] as String? ?? '',
       role: map['role'] as String? ?? AppConstants.userRole,
-      createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '') ?? DateTime.now(),
+      createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '') ??
+          DateTime.now(),
       password: map['password'] as String?,
     );
   }
@@ -39,4 +40,3 @@ class UserModel {
     };
   }
 }
-

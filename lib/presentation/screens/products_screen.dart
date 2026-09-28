@@ -24,34 +24,22 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   @override
   Widget build(BuildContext context) {
     ref.listen<AuthState>(authStateProvider, (previous, next) {
-      if (next is AuthUnauthenticated) {
-        if (context.mounted) {
-                      context.go('/');
-        }
+      if (next is AuthUnauthenticated && context.mounted) {
+        context.go('/');
       }
     });
 
     final productsAsync = ref.watch(productsNotifierProvider);
     final authState = ref.watch(authStateProvider);
-    String? currentUserId;
-    if (authState is AuthSuccess) {
-      currentUserId = authState.user.id;
-    }
-
-    String searchTerm = _searchController.text.trim().toLowerCase();
+    final currentUser = authState is AuthSuccess ? authState.user : null;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Товары'),
         actions: [
-                  IconButton(
-            onPressed: () async {
-              if (searchTerm.isNotEmpty) {
-                _searchController.clear();
-              }
-              ref.invalidate(productsProvider);
-              await ref.read(productsNotifierProvider.notifier).loadProducts();
-            },
+          IconButton(
+            onPressed: () =>
+                ref.read(productsNotifierProvider.notifier).loadProducts(),
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
           ),
@@ -62,7 +50,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                 child: ListTile(
                   leading: Icon(Icons.qr_code_scanner),
                   title: Text('Сканировать QR'),
-      ),
+                ),
               ),
               const PopupMenuItem(
                 value: 'logout',
@@ -71,7 +59,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                   title: Text('Выйти'),
                 ),
               ),
-              if (currentUserId != null)
+              if (currentUser != null)
                 const PopupMenuItem(
                   value: 'add',
                   child: ListTile(
@@ -86,9 +74,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               } else if (value == 'logout') {
                 await ref.read(authStateProvider.notifier).signOut();
                 if (context.mounted) context.go('/');
-              } else if (value == 'add' && currentUserId != null) {
+              } else if (value == 'add' && currentUser != null) {
                 context.push('/add-product');
-  }
+              }
             },
           ),
         ],
@@ -114,20 +102,23 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (error, stack) => Center(child: Text('Ошибка: $error')),
               data: (products) {
-                List filteredProducts = products;
-                if (searchTerm.isNotEmpty) {
-                  filteredProducts = products
-                      .where((product) =>
-                          product.name.toLowerCase().contains(searchTerm) ||
-                          product.description.toLowerCase().contains(searchTerm))
-                      .toList();
-}
+                // Фильтр считаем в памяти: для склада на десятки позиций
+                // этого достаточно, серверный поиск нужен при тысячах.
+                final searchTerm = _searchController.text.trim().toLowerCase();
+                final filteredProducts = searchTerm.isEmpty
+                    ? products
+                    : products
+                        .where((product) =>
+                            product.name.toLowerCase().contains(searchTerm) ||
+                            product.description
+                                .toLowerCase()
+                                .contains(searchTerm))
+                        .toList();
 
                 return RefreshIndicator(
-                  onRefresh: () async {
-                    ref.invalidate(productsProvider);
-                    await ref.read(productsNotifierProvider.notifier).loadProducts();
-                  },
+                  onRefresh: () => ref
+                      .read(productsNotifierProvider.notifier)
+                      .loadProducts(),
                   child: filteredProducts.isEmpty
                       ? const Center(
                           child: Text('Нет товаров для отображения'),
@@ -150,4 +141,3 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     );
   }
 }
-

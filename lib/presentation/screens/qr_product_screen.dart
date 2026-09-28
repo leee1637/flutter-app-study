@@ -2,12 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:warehouse_app/core/constants/app_constants.dart';
 import 'package:warehouse_app/core/utils/qr_payload.dart';
+import 'package:warehouse_app/data/models/product_model.dart';
 import 'package:warehouse_app/presentation/providers/auth_provider.dart';
 import 'package:warehouse_app/presentation/providers/product_provider.dart';
 import 'package:warehouse_app/presentation/widgets/product_image.dart';
 import 'package:warehouse_app/presentation/widgets/status_indicator.dart';
 
+/// Просмотр товара, открытый по QR-ссылке: `/qr?code=<ссылка>`.
+///
+/// Сюда можно попасть deep link'ом с другого устройства, поэтому экран
+/// доступен и без авторизации — но действия (взять/вернуть) доступны
+/// только залогиненному пользователю.
 class QRProductScreen extends ConsumerWidget {
   final String encodedQr;
 
@@ -34,6 +41,7 @@ class QRProductScreen extends ConsumerWidget {
 
     final productAsync = ref.watch(productProvider(qr.id));
     final authState = ref.watch(authStateProvider);
+    final currentUser = authState is AuthSuccess ? authState.user : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -45,15 +53,10 @@ class QRProductScreen extends ConsumerWidget {
       ),
       body: productAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(child: Text('Ошибка: ${error.toString()}')),
+        error: (error, stack) => Center(child: Text('Ошибка: $error')),
         data: (product) {
-          String? currentUserId;
-          bool isAuthenticated = false;
-
-          if (authState is AuthSuccess) {
-            currentUserId = authState.user.id;
-            isAuthenticated = true;
-          }
+          final isTakenByMe = product.status == AppConstants.statusTaken &&
+              product.takenBy == currentUser?.id;
 
           return Padding(
             padding: const EdgeInsets.all(16),
@@ -79,98 +82,44 @@ class QRProductScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 StatusIndicator(status: product.status),
-                
                 if (product.takenBy != null) ...[
                   const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(8),
+                  Text(
+                    'Взял: ${product.takenBy}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (product.takenAt != null)
+                    Text(
+                      'Когда: '
+                      '${DateFormat('dd.MM.yyyy HH:mm').format(product.takenAt!.toLocal())}',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Взял: ${product.takenBy}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        if (product.takenAt != null)
-                          Text(
-                            'Когда: ${DateFormat('dd.MM.yyyy HH:mm').format(product.takenAt!.toLocal())}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                      ],
+                ],
+                const Spacer(),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: currentUser == null
+                        ? null
+                        : () =>
+                            _handleTap(context, ref, product, currentUser.id),
+                    icon: Icon(
+                      product.status == AppConstants.statusAvailable
+                          ? Icons.check_outlined
+                          : Icons.undo_outlined,
+                    ),
+                    label: Text(
+                      product.status == AppConstants.statusAvailable
+                          ? 'Взять'
+                          : (isTakenByMe ? 'Вернуть' : 'Занят'),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          product.status == AppConstants.statusAvailable
+                              ? Colors.green
+                              : (isTakenByMe ? Colors.orange : Colors.grey),
                     ),
                   ),
-                ],
-                
-                const SizedBox(height: 24),
-                
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: isAuthenticated && currentUserId != null
-                          ? () async {
-                              if (currentUserId == null) return;
-
-                              try {
-                                final notifier = ref.read(productsNotifierProvider.notifier);
-
-                                if (product.status == 'available') {
-                                  await notifier.takeProduct(product.id, currentUserId);
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Товар успешно взят')),
-                                    );
-                                    ref.invalidate(productProvider(product.id));
-                                  }
-                                } else if (product.status == 'taken' &&
-                                    product.takenBy == currentUserId) {
-                                  await notifier.returnProduct(product.id, currentUserId);
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Товар успешно возвращен')),
-                                    );
-                                    ref.invalidate(productProvider(product.id));
-                                  }
-                                } else if (product.status == 'taken') {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Товар занят другим пользователем'),
-                                      ),
-                                    );
-                                  }
-                                }
-                              } catch (e) {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Ошибка: $e')),
-                                  );
-                                }
-                              }
-                            }
-                          : null,
-                        icon: Icon(product.status == 'available'
-                            ? Icons.check_outlined
-                            : Icons.undo_outlined),
-                        label: Text(
-                          product.status == 'available'
-                              ? 'Взять'
-                              : (product.takenBy == currentUserId ? 'Вернуть' : 'Занят'),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: product.status == 'available'
-                              ? Colors.green
-                              : (product.takenBy == currentUserId
-                                  ? Colors.orange
-                                  : Colors.grey),
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
               ],
             ),
@@ -178,5 +127,44 @@ class QRProductScreen extends ConsumerWidget {
         },
       ),
     );
+  }
+
+  Future<void> _handleTap(
+    BuildContext context,
+    WidgetRef ref,
+    ProductModel product,
+    String userId,
+  ) async {
+    final notifier = ref.read(productsNotifierProvider.notifier);
+
+    try {
+      if (product.status == AppConstants.statusAvailable) {
+        await notifier.takeProduct(product.id, userId);
+      } else if (product.status == AppConstants.statusTaken &&
+          product.takenBy == userId) {
+        await notifier.returnProduct(product.id, userId);
+      } else {
+        _show(context, 'Товар занят другим пользователем');
+        return;
+      }
+
+      ref.invalidate(productProvider(product.id));
+      if (context.mounted) {
+        _show(
+            context,
+            product.status == AppConstants.statusAvailable
+                ? 'Товар успешно взят'
+                : 'Товар успешно возвращён');
+      }
+    } catch (e) {
+      if (context.mounted) {
+        _show(context, 'Ошибка: $e');
+      }
+    }
+  }
+
+  void _show(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 }
